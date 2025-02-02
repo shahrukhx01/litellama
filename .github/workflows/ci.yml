@@ -1,0 +1,117 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  pre-commit:
+    name: Run Pre-Commit Hooks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Install dependencies
+        run: pip install pre-commit virtualenv
+
+      - name: Run pre-commit hooks
+        run: pre-commit run --all-files
+
+  ruff:
+    name: Run Ruff Linter
+    runs-on: ubuntu-latest
+    needs: pre-commit
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Ruff
+        run: pip install ruff
+
+      - name: Run Ruff
+        run: ruff check .
+
+  # mypy:
+  #   name: Run MyPy Type Checker
+  #   runs-on: ubuntu-latest
+  #   needs: pre-commit
+
+  #   steps:
+  #     - name: Checkout repository
+  #       uses: actions/checkout@v4
+
+  #     - name: Set up Python
+  #       uses: actions/setup-python@v4
+  #       with:
+  #         python-version: '3.11'
+
+  #     - name: Install uv
+  #       run: |
+  #         curl -LsSf https://astral.sh/uv/install.sh | sh  # Install uv
+
+  #     - name: Create virtual environment and install dependencies
+  #       run: |
+  #         uv venv  # Create the virtual environment
+  #         source .venv/bin/activate  # Activate the virtual environment
+  #         uv pip install .  # Install project dependencies (from requirements.txt or setup.py)
+
+  #     - name: Install MyPy and type stubs
+  #       run: |
+  #         source .venv/bin/activate  # Make sure the virtual environment is active
+  #         uv pip install mypy==1.2.0 types-requests types-PyYAML==5.4.12 types-toml  # Install mypy and type stubs
+
+  #     - name: Run MyPy
+  #       run: |
+  #         source .venv/bin/activate  # Ensure virtual environment is active
+  #         mypy --ignore-missing-imports .
+
+  tests:
+    name: Run Pytest Tests
+    runs-on: ubuntu-latest
+    needs: [pre-commit, ruff] #, mypy]  # Ensure all checks pass before running tests
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh  # Install uv
+
+      - name: Create virtual environment and install dependencies
+        run: |
+          uv venv  # Create the virtual environment
+          source .venv/bin/activate  # Activate the virtual environment
+          uv pip install .  # Install project dependencies (from requirements.txt or setup.py)
+
+
+      - name: Run pytest
+        run:  |
+          source .venv/bin/activate
+          pip install pytest==7.4.4 coverage
+          coverage run -m pytest

@@ -1,9 +1,10 @@
-import os
-from pathlib import Path
-from datasets import load_dataset
-from glob import glob
 import json
+import os
 import random
+from glob import glob
+from pathlib import Path
+
+from datasets import load_dataset
 
 
 def create_chunked_dataset() -> None:
