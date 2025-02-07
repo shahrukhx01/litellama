@@ -1,17 +1,18 @@
 import json
 import os
+from itertools import chain
 from pathlib import Path
 from typing import Optional
-from datasets import Dataset
-from loguru import logger
-from pydantic import BaseModel, field_validator
-from datasets import load_dataset
-from itertools import chain
+
 import ray
-from language_detector import LanguageDetector
-from text_chunker import TextChunker
-from omegaconf import OmegaConf
+from datasets import Dataset, load_dataset
 from dotenv import load_dotenv
+from language_detector import LanguageDetector
+from loguru import logger
+from omegaconf import OmegaConf
+from pydantic import BaseModel, field_validator
+from text_chunker import TextChunker
+
 load_dotenv()
 
 RAY_FUTURES_BATCH_SIZE = 2000
@@ -98,7 +99,9 @@ class BertPretrainingDatasetConfig(BaseModel):
         Returns:
             bool: True if the batch is already on disk, False otherwise
         """
-        return (self.destination_path / f"{self.dataset_prefix}_{batch_idx}.jsonl").exists()
+        return (
+            self.destination_path / f"{self.dataset_prefix}_{batch_idx}.jsonl"
+        ).exists()
 
 
 class BertPretrainingDataset:
@@ -210,14 +213,19 @@ def load_configs() -> list[dict]:
         list[dict]: The list of configuration files
     """
     config_files = list(Path(CONFIG_DIR_PATH).glob("*.yaml"))
-    return [OmegaConf.to_object(OmegaConf.load(str(config_file))) for config_file in config_files]
+    return [
+        OmegaConf.to_object(OmegaConf.load(str(config_file)))
+        for config_file in config_files
+    ]
 
 
 if __name__ == "__main__":
     configs = load_configs()
     for config in configs:
         if "hf_dataset_filters" in config:
-            config["hf_dataset_filters"] = HFDatasetFilters(**config["hf_dataset_filters"])
+            config["hf_dataset_filters"] = HFDatasetFilters(
+                **config["hf_dataset_filters"]
+            )
         bert_pretraining_config = BertPretrainingDatasetConfig(**config)
         bert_pretraining_dataset = BertPretrainingDataset(bert_pretraining_config)
         bert_pretraining_dataset.process()

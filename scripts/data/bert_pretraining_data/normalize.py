@@ -2,14 +2,15 @@ import json
 import os
 from pathlib import Path
 from typing import Optional
-from datasets import Dataset
-from loguru import logger
-from pydantic import BaseModel, field_validator
-from datasets import load_dataset
+
 import ray
-from text_normalizer import TextNormalizer
-from omegaconf import OmegaConf
+from datasets import Dataset, load_dataset
 from dotenv import load_dotenv
+from loguru import logger
+from omegaconf import OmegaConf
+from pydantic import BaseModel, field_validator
+from text_normalizer import TextNormalizer
+
 load_dotenv()
 
 RAY_FUTURES_BATCH_SIZE = 2000
@@ -76,7 +77,9 @@ class NormalizeDatasetConfig(BaseModel):
         Returns:
             bool: True if the batch is already on disk, False otherwise
         """
-        return (self.destination_path / f"{self.dataset_prefix}_{batch_idx}.jsonl").exists()
+        return (
+            self.destination_path / f"{self.dataset_prefix}_{batch_idx}.jsonl"
+        ).exists()
 
 
 class BertPretrainingDataset:
@@ -99,7 +102,10 @@ class BertPretrainingDataset:
         Returns:
             Dataset: The dataset for BERT pretraining
         """
-        if is_dataset_path := self._config.is_path(self._config.dataset_name_or_path) and self._config.is_on_disk:
+        if (
+            is_dataset_path := self._config.is_path(self._config.dataset_name_or_path)
+            and self._config.is_on_disk
+        ):
             return Dataset.from_file(str(self._config.dataset_name_or_path))
         elif not is_dataset_path:
             serialized_hf_dataset_filters = (
@@ -161,7 +167,8 @@ class BertPretrainingDataset:
                 results = [
                     row
                     for row in ray.get(text_normalize_futures)
-                    if len(row["text"]) >= self._config.min_chars and not row["is_filtered_out"]
+                    if len(row["text"]) >= self._config.min_chars
+                    and not row["is_filtered_out"]
                 ]
 
                 text_normalize_futures = []
@@ -178,14 +185,19 @@ def load_configs() -> list[dict]:
         list[dict]: The list of configuration files
     """
     config_files = list(Path(CONFIG_DIR_PATH).glob("*.yaml"))
-    return [OmegaConf.to_object(OmegaConf.load(str(config_file))) for config_file in config_files]
+    return [
+        OmegaConf.to_object(OmegaConf.load(str(config_file)))
+        for config_file in config_files
+    ]
 
 
 if __name__ == "__main__":
     configs = load_configs()
     for config in configs:
         if "hf_dataset_filters" in config:
-            config["hf_dataset_filters"] = HFDatasetFilters(**config["hf_dataset_filters"])
+            config["hf_dataset_filters"] = HFDatasetFilters(
+                **config["hf_dataset_filters"]
+            )
         bert_normalization_config = NormalizeDatasetConfig(**config)
         bert_dataset_normalizer = BertPretrainingDataset(bert_normalization_config)
         bert_dataset_normalizer.process()

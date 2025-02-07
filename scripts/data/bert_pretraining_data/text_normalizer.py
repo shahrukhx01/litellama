@@ -1,5 +1,6 @@
 import re
 import unicodedata
+
 import ray
 from loguru import logger
 
@@ -20,9 +21,9 @@ class TextNormalizer:
         text = row["text"].lower()  # type: ignore
         row["is_filtered_out"] = False
         try:
-            text = unicodedata.normalize('NFKD', text)
-            text = text.encode('ascii', 'ignore').decode('utf-8')
-            text = re.sub(r'[^a-zA-Z0-9\s]', '', text)
+            text = unicodedata.normalize("NFKD", text)
+            text = text.encode("ascii", "ignore").decode("utf-8")
+            text = re.sub(r"[^a-zA-Z0-9\s]", "", text)
             row["text"] = text
         except Exception as e:
             logger.error(f"Error detecting language: {str(e)}")
