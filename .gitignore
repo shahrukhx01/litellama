@@ -176,3 +176,6 @@ dataset/
 
 # OSX
 .DS_Store
+
+# model checkpoints
+model_checkpoints/

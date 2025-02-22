@@ -1,6 +1,6 @@
-# Crammers
+# Lite LLaMA
 
-Implement, train and fine-tune language models from scratch on consumer grade hardware.
+Light-weight from scratch pytorch implementations of open-weights LLMs.
 
 ## Installation
 

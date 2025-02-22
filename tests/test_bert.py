@@ -3,7 +3,7 @@ import torch
 from transformers import BertForMaskedLM as HF_BertForMaskedLM
 from transformers import BertTokenizer
 
-from crammers.models import BertMaskedLM
+from litellama.models import BertMaskedLM
 
 
 class TestBertMaskedLM:
