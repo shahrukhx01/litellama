@@ -1,6 +1,4 @@
 import math
-from dataclasses import dataclass
-from typing import Optional
 
 import lightning as L
 import torch
@@ -10,72 +8,8 @@ import torch.optim as optim
 from loguru import logger
 from transformers import BertForMaskedLM
 
-from crammers.optimizers.scheduled_optimizer import ScheduledOptim
-
-
-@dataclass
-class BertConfig:
-    """Configuration class for BERT model parameters.
-
-    Args:
-        vocab_size (int): Size of the vocabulary.
-        type_vocab_size (int): Number of segment types.
-        embed_size (int): Dimension of the embeddings.
-        seq_len (int): Maximum sequence length for the input.
-        heads (int): Number of attention heads.
-        d_model (int): Dimension of the model.
-        feed_forward_hidden (int): Hidden layer size of the feedforward network.
-        hidden_dropout_prob (float): Dropout probability for hidden layers.
-        attention_probs_dropout_prob (float): Dropout probability for attention layers.
-        classifier_dropout (float): Dropout probability for the classifier layer.
-        pad_token_id (int): Token ID for padding.
-        n_layers (int): Number of layers in the encoder.
-        layer_norm_eps (float): Epsilon value for layer normalization.
-        learning_rate (float): Learning rate for the optimizer.
-        weight_decay (float): Weight decay for the optimizer.
-        warmup_steps (int): Number of steps for the learning rate warmup.
-        init_weights (bool): Whether to initialize weights or not.
-    """
-
-    def __init__(
-        self,
-        vocab_size: int = 30522,
-        type_vocab_size: int = 3,
-        embed_size: int = 768,
-        seq_len: int = 512,
-        heads: int = 12,
-        d_model: int = 768,
-        feed_forward_hidden: int = 3072,
-        hidden_dropout_prob: float = 0.1,
-        attention_probs_dropout_prob: float = 0.1,
-        classifier_dropout: Optional[float] = None,
-        pad_token_id: int = 0,
-        n_layers: int = 12,
-        layer_norm_eps: float = 1e-12,
-        learning_rate: float = 5e-5,
-        weight_decay: float = 0.01,
-        warmup_steps: int = 4000,
-        init_weights: bool = False,
-    ):
-        self.vocab_size = vocab_size
-        self.type_vocab_size = type_vocab_size
-        self.embed_size = embed_size
-        self.seq_len = seq_len
-        self.heads = heads
-        self.d_model = d_model
-        self.feed_forward_hidden = feed_forward_hidden
-        self.hidden_dropout_prob = hidden_dropout_prob
-        self.attention_probs_dropout_prob = attention_probs_dropout_prob
-        self.classifier_dropout = classifier_dropout
-        self.pad_token_id = pad_token_id
-        self.n_layers = n_layers
-        self.layer_norm_eps = layer_norm_eps
-        self.init_weights = init_weights
-
-        # Optimizer parameters
-        self.learning_rate = learning_rate
-        self.weight_decay = weight_decay
-        self.warmup_steps = warmup_steps
+from litellama.models.bert.config import BertConfig
+from litellama.optimizers.scheduled_optimizer import ScheduledOptim
 
 
 class BertEmbedding(torch.nn.Module):
@@ -170,7 +104,7 @@ class MultiHeadedAttention(nn.Module):
     def forward(
         self,
         embeddings: torch.Tensor,
-    ):
+    ):  # sourcery skip: inline-immediately-returned-variable
         """Forward pass for multi-headed attention layer.
 
         Args:
@@ -350,8 +284,7 @@ class MaskedLanguageModel(nn.Module):
             torch.Tensor: Output logits after applying linear transformation and softmax.
         """
         hidden_states = self.transform(hidden_states)
-        logits = self.decoder(hidden_states)
-        return logits
+        return self.decoder(hidden_states)
 
 
 class BertMaskedLM(L.LightningModule):
@@ -453,6 +386,7 @@ class BertMaskedLM(L.LightningModule):
         )
         return ScheduledOptim(optimizer, self.config.d_model, self.config.warmup_steps)
 
+    # TODO: Use huggingface layer names for straightforward weight loading
     def load_pretrained_bert(self, model_name: str = "bert-base-uncased"):
         # sourcery skip: extract-method
         """
