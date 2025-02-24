@@ -439,11 +439,3 @@ class BertMaskedLM(L.LightningModule):
             f"Successfully loaded weights from pretrained model: {self._config.name_or_path} in {load_duration:.2f}"
             " seconds."
         )
-        return self
-
-
-if __name__ == "__main__":
-    from litellama.models.bert.bert_config import BertVariantConfig
-
-    bert = BertMaskedLM(BertVariantConfig.TINY_UNCASED.value)
-    bert.load_pretrained_hf()
