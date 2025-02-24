@@ -1,4 +1,3 @@
-import time
 from typing import Optional
 
 import lightning as L
@@ -357,6 +356,8 @@ class LLaMACausalLM(L.LightningModule):
 
     def load_pretrained_hf(self):
         """Load pretrained weights from a Hugging Face model checkpoint."""
+        import time
+
         from transformers import LlamaForCausalLM
 
         load_start_ts = time.perf_counter()
@@ -365,4 +366,7 @@ class LLaMACausalLM(L.LightningModule):
         )
         self.load_state_dict(pretrained.state_dict(), strict=True)
         load_duration = time.perf_counter() - load_start_ts
-        logger.info(f"Loaded pretrained model weights in {load_duration:.2f} seconds.")
+        logger.info(
+            f"Successfully loaded weights from pretrained model: {self._config.name_or_path} in {load_duration:.2f}"
+            " seconds."
+        )

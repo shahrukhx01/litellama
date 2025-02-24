@@ -6,9 +6,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from loguru import logger
-from transformers import BertForMaskedLM
 
-from litellama.models.bert.config import BertConfig
+from litellama.models.bert.bert_config import BertConfig
 from litellama.optimizers.scheduled_optimizer import ScheduledOptim
 
 
@@ -22,12 +21,14 @@ class BertEmbedding(torch.nn.Module):
     def __init__(self, config: BertConfig):
         super().__init__()
         self.embed_size = config.embed_size
-        self.token = nn.Embedding(
+        self.word_embeddings = nn.Embedding(
             config.vocab_size, config.embed_size, padding_idx=config.pad_token_id
         )
-        self.segment = nn.Embedding(config.type_vocab_size, config.embed_size)
-        self.position = nn.Embedding(config.seq_len, config.embed_size)
-        self.layer_norm = nn.LayerNorm(config.embed_size, eps=config.layer_norm_eps)
+        self.token_type_embeddings = nn.Embedding(
+            config.type_vocab_size, config.embed_size
+        )
+        self.position_embeddings = nn.Embedding(config.seq_len, config.embed_size)
+        self.LayerNorm = nn.LayerNorm(config.embed_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(p=config.hidden_dropout_prob)
         self.register_buffer(
             "position_ids",
@@ -52,11 +53,11 @@ class BertEmbedding(torch.nn.Module):
             (input_ids.size(0), -1)
         )
         embeddings = (
-            self.token(input_ids)
-            + self.position(position_ids)
-            + self.segment(token_type_ids)
+            self.word_embeddings(input_ids)
+            + self.position_embeddings(position_ids)
+            + self.token_type_embeddings(token_type_ids)
         )
-        embeddings = self.layer_norm(embeddings)
+        embeddings = self.LayerNorm(embeddings)
         embeddings = self.dropout(embeddings)
         return embeddings
 
@@ -71,13 +72,13 @@ class MultiHeadedAttentionOutput(nn.Module):
     def __init__(self, config: BertConfig):
         super(MultiHeadedAttentionOutput, self).__init__()
         self.dense = torch.nn.Linear(config.d_model, config.d_model)
-        self.layer_norm = torch.nn.LayerNorm(config.d_model, eps=config.layer_norm_eps)
+        self.LayerNorm = torch.nn.LayerNorm(config.d_model, eps=config.layer_norm_eps)
         self.out_dropout = torch.nn.Dropout(config.hidden_dropout_prob)
 
     def forward(self, embeddings: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
         hidden_states = self.dense(context)
         hidden_states = self.out_dropout(hidden_states)
-        hidden_states = self.layer_norm(hidden_states + embeddings)
+        hidden_states = self.LayerNorm(hidden_states + embeddings)
         return hidden_states
 
 
@@ -98,8 +99,6 @@ class MultiHeadedAttention(nn.Module):
         self.query = torch.nn.Linear(config.d_model, config.d_model)
         self.key = torch.nn.Linear(config.d_model, config.d_model)
         self.value = torch.nn.Linear(config.d_model, config.d_model)
-
-        self.output = MultiHeadedAttentionOutput(config)
 
     def forward(
         self,
@@ -135,37 +134,80 @@ class MultiHeadedAttention(nn.Module):
             .contiguous()
             .view(context.shape[0], -1, self.heads * self.d_k)
         )
-        # pass the contextualized embeddings through the output layer
-        hidden_states = self.output(embeddings, context)
-        return hidden_states
+        return context
 
 
-class FFN(nn.Module):
-    """Feed-forward network for the BERT encoder layer.
+class BertAttention(nn.Module):
+    """Bert attention layer that applies multi-headed attention and output layer.
 
     Args:
         config (BertConfig): BERT configuration object that contains model parameters.
     """
 
     def __init__(self, config: BertConfig):
-        super(FFN, self).__init__()
-        self.intermediate_dim = config.feed_forward_hidden
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.act_fn = nn.GELU()
-        self.fc1 = nn.Linear(config.d_model, self.intermediate_dim)
-        self.fc2 = nn.Linear(self.intermediate_dim, config.d_model)
+        super(BertAttention, self).__init__()
+        self.self = MultiHeadedAttention(config)
+        self.output = MultiHeadedAttentionOutput(config)
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        """Forward pass through the feed-forward network.
+    def forward(self, embeddings: torch.Tensor) -> torch.Tensor:
+        hidden_states = self.self(embeddings)
+        return self.output(embeddings, hidden_states)
+
+
+class BertOutput(nn.Module):
+    """Output layer for the feed-forward network.
+
+    Args:
+        config (BertConfig): BERT configuration object that contains model parameters.
+    """
+
+    def __init__(self, config: BertConfig):
+        super().__init__()
+        self.dense = nn.Linear(config.feed_forward_hidden, config.d_model)
+        self.LayerNorm = nn.LayerNorm(config.d_model, eps=config.layer_norm_eps)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+
+    def forward(
+        self, hidden_states: torch.Tensor, input_tensor: torch.Tensor
+    ) -> torch.Tensor:
+        """Forward pass for the output layer.
 
         Args:
-            hidden_states (torch.Tensor): Input tensor representing activations from previous layers.
+            hidden_states (torch.Tensor): Hidden states from the feed-forward network.
+            input_tensor (torch.Tensor): Input tensor to the feed-forward network.
 
         Returns:
-            torch.Tensor: Output tensor after feed-forward operations.
+            torch.Tensor: Output tensor after applying feed-forward network.
         """
-        hidden_states = self.act_fn(self.fc1(hidden_states))
-        hidden_states = self.dropout(self.fc2(hidden_states))
+        hidden_states = self.dense(hidden_states)
+        hidden_states = self.dropout(hidden_states)
+        hidden_states = self.LayerNorm(hidden_states + input_tensor)
+        return hidden_states
+
+
+class BertIntermediate(nn.Module):
+    """Intermediate layer for the feed-forward network.
+
+    Args:
+        config (BertConfig): BERT configuration object that contains model parameters.
+    """
+
+    def __init__(self, config: BertConfig):
+        super().__init__()
+        self.dense = nn.Linear(config.d_model, config.feed_forward_hidden)
+        self.intermediate_act_fn = nn.GELU()
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        """Forward pass for the intermediate layer.
+
+        Args:
+            hidden_states (torch.Tensor): Input tensor.
+
+        Returns:
+            torch.Tensor: Output tensor after applying feed-forward network.
+        """
+        hidden_states = self.dense(hidden_states)
+        hidden_states = self.intermediate_act_fn(hidden_states)
         return hidden_states
 
 
@@ -178,10 +220,9 @@ class BertEncoderLayer(nn.Module):
 
     def __init__(self, config: BertConfig):
         super(BertEncoderLayer, self).__init__()
-        self.layer_norm = torch.nn.LayerNorm(config.d_model, eps=config.layer_norm_eps)
-        self.attention = MultiHeadedAttention(config)
-        self.feed_forward = FFN(config)
-        self.dropout = torch.nn.Dropout(config.hidden_dropout_prob)
+        self.attention = BertAttention(config)
+        self.intermediate = BertIntermediate(config)
+        self.output = BertOutput(config)
 
     def forward(self, embeddings: torch.Tensor) -> torch.Tensor:
         """Forward pass for a single encoder layer.
@@ -193,8 +234,32 @@ class BertEncoderLayer(nn.Module):
             torch.Tensor: Output embeddings after applying multi-head attention and feed-forward network.
         """
         interacted = self.attention(embeddings)
-        feed_forward_out = self.feed_forward(interacted)
-        return self.layer_norm(feed_forward_out + interacted)
+        intermediate = self.intermediate(interacted)
+        feed_forward_out = self.output(intermediate, interacted)
+        return feed_forward_out
+
+
+class BertEncoderBlock(nn.Module):
+    def __init__(self, config: BertConfig):
+        super(BertEncoderBlock, self).__init__()
+        self.n_layers = config.n_layers
+        self.layer = torch.nn.ModuleList(
+            [BertEncoderLayer(config) for _ in range(config.n_layers)]
+        )
+
+    def forward(self, embeddings: torch.Tensor) -> torch.Tensor:
+        """Forward pass for the entire BERT model.
+
+        Args:
+            embeddings (torch.Tensor): Input embeddings.
+
+        Returns:
+            torch.Tensor: Output embeddings after passing through all encoder layers.
+        """
+        hidden_states = embeddings
+        for encoder in self.layer:
+            hidden_states = encoder(hidden_states)
+        return hidden_states
 
 
 class Bert(nn.Module):
@@ -208,140 +273,7 @@ class Bert(nn.Module):
         super(Bert, self).__init__()
         self.n_layers = config.n_layers
         self.embeddings = BertEmbedding(config)
-        self.encoder_blocks = torch.nn.ModuleList(
-            [BertEncoderLayer(config) for _ in range(config.n_layers)]
-        )
-
-    def forward(self, input_ids, token_type_ids):
-        """Forward pass for the entire BERT model.
-
-        Args:
-            input_ids (torch.Tensor): Input token indices.
-            token_type_ids (torch.Tensor): Segment labels (e.g., sentence A/B).
-
-        Returns:
-            torch.Tensor: Output embeddings after passing through all encoder layers.
-        """
-        embeddings = self.embeddings(input_ids, token_type_ids)
-
-        for encoder in self.encoder_blocks:
-            embeddings = encoder(embeddings)
-        return embeddings
-
-
-class BertPredictionHeadTransform(nn.Module):
-    """Transforms hidden states to another latent space followed by non-linarity and layer normalization.
-
-    Args:
-        config (BertConfig): BERT configuration object that contains model parameters.
-    """
-
-    def __init__(self, config: BertConfig):
-        super(BertPredictionHeadTransform, self).__init__()
-        self.dense = nn.Linear(config.d_model, config.d_model)
-        self.transform_act_fn = nn.GELU()
-        self.layer_norm = nn.LayerNorm(config.d_model, eps=config.layer_norm_eps)
-
-    def forward(self, hidden_states):
-        hidden_states = self.dense(hidden_states)
-        hidden_states = self.transform_act_fn(hidden_states)
-        hidden_states = self.layer_norm(hidden_states)
-        return hidden_states
-
-
-class MaskedLanguageModel(nn.Module):
-    """Masked Language Model that predicts the original token from a masked input sequence.
-
-    Args:
-        hidden (int): BERT model output size.
-        vocab_size (int): Size of the vocabulary.
-    """
-
-    def __init__(
-        self, config: BertConfig, embedding_weights: torch.nn.Parameter = None
-    ):
-        super(MaskedLanguageModel, self).__init__()
-
-        self.transform = BertPredictionHeadTransform(config)
-        # the weights of the decoder layer are tied to the input embeddings
-        # furthermore, as embeddings dont have bias, the decoder layer does not have bias
-        self.decoder = torch.nn.Linear(config.d_model, config.vocab_size, bias=False)
-
-        if embedding_weights is not None:
-            self.decoder.weight = embedding_weights
-
-        # as the weights are tied, the bias is added separately
-        self.bias = torch.nn.Parameter(torch.zeros(config.vocab_size))
-        self.decoder.bias = self.bias
-
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        """Forward pass for masked language model.
-
-        Args:
-            hidden_states (torch.Tensor): Input tensor with masked tokens.
-
-        Returns:
-            torch.Tensor: Output logits after applying linear transformation and softmax.
-        """
-        hidden_states = self.transform(hidden_states)
-        return self.decoder(hidden_states)
-
-
-class BertMaskedLM(L.LightningModule):
-    """BERT Language Model for pretraining: Masked Language Model
-
-    Args:
-        config (BertConfig): Configuration object that contains model parameters.
-    """
-
-    def __init__(self, config: BertConfig):
-        super().__init__()
-        self.config = config
-        self.encoder = Bert(config)
-        self.mask_lm = MaskedLanguageModel(
-            config, embedding_weights=self.encoder.embeddings.token.weight
-        )
-        if config.init_weights:
-            self._init_embedding_weights()
-            self.apply(self.init_model_weights)
-
-    def _init_embedding_weights(self) -> None:
-        """Initialize the weights for the embedding layers"""
-
-        # initialize position embeddings with a larger standard deviation
-        nn.init.normal_(
-            self.encoder.embeddings.position.weight,
-            mean=0.0,
-            std=self.config.embed_size**-0.5,
-        )
-
-        # initialize segment/token type embeddings
-        nn.init.normal_(self.encoder.embeddings.segment.weight, mean=0.0, std=0.02)
-
-        # Log model parameter count
-        logger.info(
-            f"Initialized BERT model with {sum(p.numel() for p in self.parameters())} parameters"
-        )
-
-    @staticmethod
-    def init_model_weights(module: nn.Module) -> None:
-        """Initialize the model weights according to the BERT paper.
-
-        Linear layers are initialized with truncated normal distribution.
-        Layer normalization is initialized with ones for weight and zeros for bias.
-        Embedding layers are initialized with normal distribution.
-        """
-        if isinstance(module, (nn.Linear, nn.Embedding)):
-            # Initialize Linear and Embedding weight
-            module.weight.data.normal_(mean=0.0, std=0.02)
-
-            # Initialize Linear bias
-            if isinstance(module, nn.Linear) and module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, nn.LayerNorm):
-            # Initialize LayerNorm
-            module.bias.data.zero_()
-            module.weight.data.fill_(1.0)
+        self.encoder = BertEncoderBlock(config)
 
     def forward(
         self, input_ids: torch.Tensor, token_type_ids: torch.Tensor
@@ -355,8 +287,111 @@ class BertMaskedLM(L.LightningModule):
         Returns:
             torch.Tensor: Output embeddings after passing through all encoder layers.
         """
-        hidden_states = self.encoder(input_ids, token_type_ids)
-        return self.mask_lm(hidden_states)
+        embeddings = self.embeddings(input_ids, token_type_ids)
+        hidden_states = self.encoder(embeddings)
+        return hidden_states
+
+
+class BertPredictionHeadTransform(nn.Module):
+    """Transforms hidden states to another latent space followed by non-linarity and layer normalization.
+
+    Args:
+        config (BertConfig): BERT configuration object that contains model parameters.
+    """
+
+    def __init__(self, config: BertConfig):
+        super(BertPredictionHeadTransform, self).__init__()
+        self.dense = nn.Linear(config.d_model, config.d_model)
+        self.transform_act_fn = nn.GELU()
+        self.LayerNorm = nn.LayerNorm(config.d_model, eps=config.layer_norm_eps)
+
+    def forward(self, hidden_states):
+        hidden_states = self.dense(hidden_states)
+        hidden_states = self.transform_act_fn(hidden_states)
+        hidden_states = self.LayerNorm(hidden_states)
+        return hidden_states
+
+
+class BertLMPredictionHead(nn.Module):
+    """BERT Language Model head that predicts masked tokens.
+
+    Args:
+        config (BertConfig): BERT configuration object that contains model parameters.
+    """
+
+    def __init__(self, config: BertConfig):
+        super(BertLMPredictionHead, self).__init__()
+        self.transform = BertPredictionHeadTransform(config)
+
+        # The output weights are the same as the input embeddings, but there is
+        # an output-only bias for each token.
+        self.decoder = nn.Linear(config.d_model, config.vocab_size, bias=False)
+
+        self.bias = nn.Parameter(torch.zeros(config.vocab_size))
+
+        # Need a link between the two variables so that the bias is correctly resized with `resize_token_embeddings`
+        self.decoder.bias = self.bias
+
+    def _tie_weights(self):
+        self.decoder.bias = self.bias
+
+    def forward(self, hidden_states):
+        hidden_states = self.transform(hidden_states)
+        hidden_states = self.decoder(hidden_states)
+        return hidden_states
+
+
+class BertOnlyMLMHead(nn.Module):
+    """BERT Masked Language Model head that predicts masked tokens.
+
+    Args:
+        config (BertConfig): BERT configuration object that contains model parameters.
+    """
+
+    def __init__(self, config: BertConfig):
+        super().__init__()
+        self.predictions = BertLMPredictionHead(config)
+
+    def forward(self, sequence_output: torch.Tensor) -> torch.Tensor:
+        """Forward pass for the Masked LM head.
+
+        Args:
+            sequence_output (torch.Tensor): Output embeddings from the BERT model.
+
+        Returns:
+            torch.Tensor: Predicted token logits.
+        """
+        prediction_scores = self.predictions(sequence_output)
+        return prediction_scores
+
+
+class BertMaskedLM(L.LightningModule):
+    """BERT Language Model for pretraining: Masked Language Model
+
+    Args:
+        config (BertConfig): Configuration object that contains model parameters.
+    """
+
+    def __init__(self, config: BertConfig):
+        super().__init__()
+        self._config = config
+        self.bert = Bert(config)
+        self.cls = BertOnlyMLMHead(config)
+
+    def forward(
+        self, input_ids: torch.Tensor, token_type_ids: torch.Tensor
+    ) -> torch.Tensor:
+        """Forward pass for the entire BERT model.
+
+        Args:
+            input_ids (torch.Tensor): Input token indices.
+            token_type_ids (torch.Tensor): Segment labels (e.g., sentence A/B).
+
+        Returns:
+            torch.Tensor: Output embeddings after passing through all encoder layers.
+        """
+        hidden_states = self.bert(input_ids, token_type_ids)
+        return self.cls(hidden_states)
 
     def training_step(
         self, input_ids: torch.Tensor, token_type_ids: torch.Tensor
@@ -371,7 +406,7 @@ class BertMaskedLM(L.LightningModule):
             torch.Tensor: Loss value for the Masked LM task.
         """
         embeddings = self(input_ids, token_type_ids)
-        return self.mask_lm(embeddings)
+        return self.cls(embeddings)
 
     def configure_optimizers(self):
         """Configure optimizers and learning rate scheduler for training.
@@ -386,121 +421,29 @@ class BertMaskedLM(L.LightningModule):
         )
         return ScheduledOptim(optimizer, self.config.d_model, self.config.warmup_steps)
 
-    # TODO: Use huggingface layer names for straightforward weight loading
-    def load_pretrained_bert(self, model_name: str = "bert-base-uncased"):
+    def load_pretrained_hf(self):
         # sourcery skip: extract-method
-        """
-        Load pretrained weights from HuggingFace Transformers BERT model into custom BERT implementation.
+        """Load pretrained weights from a Hugging Face model checkpoint."""
+        # load pretrained model
+        import time
 
-        Args:
-            model_name (str): Name of pretrained model to load from HuggingFace
+        from transformers import BertForMaskedLM
 
-        Returns:
-            BERTLM: Custom model with loaded pretrained weights
-            None: If transformers is not installed
-        """
-        try:
-            # load pretrained model
-            pretrained: BertForMaskedLM = BertForMaskedLM.from_pretrained(model_name)
+        load_start_ts = time.perf_counter()
+        pretrained: BertForMaskedLM = BertForMaskedLM.from_pretrained(
+            self._config.name_or_path
+        )
+        self.load_state_dict(pretrained.state_dict(), strict=True)
+        load_duration = time.perf_counter() - load_start_ts
+        logger.info(
+            f"Successfully loaded weights from pretrained model: {self._config.name_or_path} in {load_duration:.2f}"
+            " seconds."
+        )
+        return self
 
-            # map embeddings
-            self.encoder.embeddings.token.weight.data = (
-                pretrained.bert.embeddings.word_embeddings.weight.data
-            )
-            self.encoder.embeddings.position.weight.data = (
-                pretrained.bert.embeddings.position_embeddings.weight.data
-            )
-            self.encoder.embeddings.segment.weight.data = (
-                pretrained.bert.embeddings.token_type_embeddings.weight.data
-            )
-            self.encoder.embeddings.layer_norm.weight.data = (
-                pretrained.bert.embeddings.LayerNorm.weight.data
-            )
-            self.encoder.embeddings.layer_norm.bias.data = (
-                pretrained.bert.embeddings.LayerNorm.bias.data
-            )
-            # map encoder layers
-            for custom_layer, pretrained_layer in zip(
-                self.encoder.encoder_blocks, pretrained.bert.encoder.layer
-            ):
-                # self attention weights
-                custom_layer.attention.query.weight.data = (
-                    pretrained_layer.attention.self.query.weight.data
-                )
-                custom_layer.attention.query.bias.data = (
-                    pretrained_layer.attention.self.query.bias.data
-                )
-                custom_layer.attention.key.weight.data = (
-                    pretrained_layer.attention.self.key.weight.data
-                )
-                custom_layer.attention.key.bias.data = (
-                    pretrained_layer.attention.self.key.bias.data
-                )
-                custom_layer.attention.value.weight.data = (
-                    pretrained_layer.attention.self.value.weight.data
-                )
-                custom_layer.attention.value.bias.data = (
-                    pretrained_layer.attention.self.value.bias.data
-                )
-                custom_layer.attention.output.dense.weight.data = (
-                    pretrained_layer.attention.output.dense.weight.data
-                )
-                custom_layer.attention.output.dense.bias.data = (
-                    pretrained_layer.attention.output.dense.bias.data
-                )
-                custom_layer.attention.output.layer_norm.weight.data = (
-                    pretrained_layer.attention.output.LayerNorm.weight.data
-                )
-                custom_layer.attention.output.layer_norm.bias.data = (
-                    pretrained_layer.attention.output.LayerNorm.bias.data
-                )
 
-                # layer norm weights
-                custom_layer.layer_norm.weight.data = (
-                    pretrained_layer.output.LayerNorm.weight.data
-                )
-                custom_layer.layer_norm.bias.data = (
-                    pretrained_layer.output.LayerNorm.bias.data
-                )
+if __name__ == "__main__":
+    from litellama.models.bert.bert_config import BertVariantConfig
 
-                # feed forward weights
-                custom_layer.feed_forward.fc1.weight.data = (
-                    pretrained_layer.intermediate.dense.weight.data
-                )
-                custom_layer.feed_forward.fc1.bias.data = (
-                    pretrained_layer.intermediate.dense.bias.data
-                )
-                custom_layer.feed_forward.fc2.weight.data = (
-                    pretrained_layer.output.dense.weight.data
-                )
-                custom_layer.feed_forward.fc2.bias.data = (
-                    pretrained_layer.output.dense.bias.data
-                )
-
-            # load MLM transform weights
-            self.mask_lm.transform.dense.weight.data = (
-                pretrained.cls.predictions.transform.dense.weight.data
-            )
-            self.mask_lm.transform.dense.bias.data = (
-                pretrained.cls.predictions.transform.dense.bias.data
-            )
-            self.mask_lm.transform.layer_norm.weight.data = (
-                pretrained.cls.predictions.transform.LayerNorm.weight.data
-            )
-            self.mask_lm.transform.layer_norm.bias.data = (
-                pretrained.cls.predictions.transform.LayerNorm.bias.data
-            )
-
-            # load MLM bias weights
-            self.mask_lm.decoder.weight.data = (
-                pretrained.cls.predictions.decoder.weight.data
-            )
-            self.mask_lm.bias.data = pretrained.cls.predictions.bias.data
-            logger.info(
-                f"Successfully loaded weights from pretrained model: {model_name}"
-            )
-            return self
-
-        except Exception as e:
-            logger.error(f"Error loading pretrained model: {str(e)}")
-            return None
+    bert = BertMaskedLM(BertVariantConfig.TINY_UNCASED.value)
+    bert.load_pretrained_hf()
