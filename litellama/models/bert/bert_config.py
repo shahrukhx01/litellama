@@ -1,9 +1,8 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import Callable, Optional
 
 from transformers import BertConfig as HF_BertConfig
-from transformers import BertTokenizer
 
 
 @dataclass
@@ -11,6 +10,7 @@ class BertConfig:
     """Configuration class for BERT model parameters.
 
     Args:
+        name_or_path (str): Name or path of the pretrained model.
         vocab_size (int): Size of the vocabulary.
         type_vocab_size (int): Number of segment types.
         embed_size (int): Dimension of the embeddings.
@@ -32,6 +32,7 @@ class BertConfig:
 
     def __init__(
         self,
+        name_or_path: str = "google-bert/bert-base-uncased",
         vocab_size: int = 30522,
         type_vocab_size: int = 3,
         embed_size: int = 768,
@@ -50,6 +51,7 @@ class BertConfig:
         warmup_steps: int = 4000,
         init_weights: bool = False,
     ):
+        self.name_or_path = name_or_path
         self.vocab_size = vocab_size
         self.type_vocab_size = type_vocab_size
         self.embed_size = embed_size
@@ -71,20 +73,22 @@ class BertConfig:
         self.warmup_steps = warmup_steps
 
     @classmethod
-    def load_from_hf_config(cls, model_name: str) -> "BertConfig":
+    def load_from_hf_config(cls, model_name_or_path: str) -> "BertConfig":
         """Load a BERT config from the Hugging Face library.
 
         Args:
-            model_name (str): The name of the BERT model to load.
+            model_name_or_path (str): Name or path of the pretrained model.
 
         Returns:
             BertConfig: The BERT configuration of custom model with values mapped
             from the Hugging Face model.
         """
-        hf_bert_tokenizer: BertTokenizer = BertTokenizer.from_pretrained(model_name)
-        hf_bert_config: HF_BertConfig = HF_BertConfig.from_pretrained(model_name)
+        hf_bert_config: HF_BertConfig = HF_BertConfig.from_pretrained(
+            model_name_or_path
+        )
         return BertConfig(
-            vocab_size=hf_bert_tokenizer.vocab_size,
+            name_or_path=model_name_or_path,
+            vocab_size=hf_bert_config.vocab_size,
             type_vocab_size=hf_bert_config.type_vocab_size,
             pad_token_id=hf_bert_config.pad_token_id,
             embed_size=hf_bert_config.hidden_size,  # Standard for bert-base
@@ -101,6 +105,33 @@ class BertConfig:
 
 
 class BertVariantConfig(Enum):
-    BASE_UNCASED = BertConfig.load_from_hf_config("bert-base-uncased")
-    LARGE_UNCASED = BertConfig.load_from_hf_config("bert-large-uncased")
-    TINY_UNCASED = BertConfig.load_from_hf_config("prajjwal1/bert-tiny")
+    """
+    Enum class for different Bert model variants.
+
+    Each variant stores a tuple containing the model name and a function to load the configuration.
+    """
+
+    BASE_UNCASED = ("google-bert/bert-base-uncased", BertConfig.load_from_hf_config)
+    LARGE_UNCASED = ("google-bert/bert-large-uncased", BertConfig.load_from_hf_config)
+    TINY_UNCASED = ("prajjwal1/bert-tiny", BertConfig.load_from_hf_config)
+
+    def __init__(self, model_name: str, load_func: Callable):
+        """
+        Initializes the BertVariantConfig instance.
+
+        Args:
+            model_name (str): The model name string.
+            load_func (Callable): The function used to load the model configuration.
+        """
+        self._model_name = model_name
+        self._load_func = load_func
+
+    @property
+    def value(self) -> BertConfig:
+        """
+        Lazy-loads the configuration when accessed.
+
+        Returns:
+            BertConfig: The loaded Bert configuration object.
+        """
+        return self._load_func(self._model_name)

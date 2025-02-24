@@ -32,10 +32,10 @@ class TestBertMaskedLM:
             k: v for k, v in tokens.items() if k in ["input_ids", "token_type_ids"]
         }
 
-        output = bert_model(**filtered_tokens)
+        output: torch.Tensor = bert_model(**filtered_tokens)
 
         batch_size, seq_len = filtered_tokens["input_ids"].shape
-        assert output.shape == (batch_size, seq_len, bert_model.config.vocab_size)
+        assert output.shape == (batch_size, seq_len, bert_model._config.vocab_size)
 
     def test_pretrained_weights_loading(self, bert_model: BertMaskedLM) -> None:
         """Test loading of pretrained weights.
@@ -45,13 +45,12 @@ class TestBertMaskedLM:
 
         Verifies that pretrained weights are properly loaded and not zero-initialized.
         """
-        model_name = "bert-base-uncased"
-        loaded_model = bert_model.load_pretrained_bert(model_name)
+        loaded_model = bert_model.load_pretrained_hf()
 
         assert isinstance(loaded_model, type(bert_model))
         assert not torch.allclose(
-            loaded_model.encoder.embeddings.token.weight,
-            torch.zeros_like(loaded_model.encoder.embeddings.token.weight),
+            loaded_model.bert.embeddings.word_embeddings.weight,
+            torch.zeros_like(loaded_model.bert.embeddings.word_embeddings.weight),
         )
 
     def test_huggingface_compatibility(
@@ -68,7 +67,7 @@ class TestBertMaskedLM:
         model_name = "bert-base-uncased"
         text = "testing bert model"
 
-        bert_model = bert_model.load_pretrained_bert(model_name).eval()
+        bert_model = bert_model.load_pretrained_hf().eval()
         hf_model = HF_BertForMaskedLM.from_pretrained(model_name).eval()
 
         tokens = bert_tokenizer(
@@ -95,8 +94,7 @@ class TestBertMaskedLM:
 
         Validates that the model can predict masked tokens with meaningful words.
         """
-        model_name = "bert-base-uncased"
-        bert_model = bert_model.load_pretrained_bert(model_name).eval()
+        bert_model = bert_model.load_pretrained_hf().eval()
 
         text = "The cat [MASK] on the mat."
         tokens = bert_tokenizer(
@@ -166,7 +164,7 @@ class TestBertMaskedLM:
         loss = output.mean()
         loss.backward()
 
-        assert bert_model.encoder.embeddings.token.weight.grad is not None
+        assert bert_model.bert.embeddings.word_embeddings.weight.grad is not None
 
     def test_input_validation(
         self, bert_model: BertMaskedLM, bert_tokenizer: BertTokenizer
