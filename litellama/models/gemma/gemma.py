@@ -1,10 +1,10 @@
 from typing import Optional
 
-import lightning as L
 import torch
 import torch.nn as nn
 from loguru import logger
 
+from litellama.models.base_model import BaseModel
 from litellama.models.gemma.gemma_config import GemmaConfig
 
 
@@ -317,7 +317,7 @@ class GemmaModel(nn.Module):
         return self.norm(x)
 
 
-class GemmaCausalLM(L.LightningModule):
+class GemmaCausalLM(BaseModel):
     """Gemma Language Model implementing an autoregressive decoder-only architecture.
 
     Args:
@@ -325,7 +325,7 @@ class GemmaCausalLM(L.LightningModule):
     """
 
     def __init__(self, config: GemmaConfig):
-        super().__init__()
+        super().__init__(config.name_or_path, config.device)
         assert config.vocab_size != -1, "Vocab size must be set"
         self._config = config
 

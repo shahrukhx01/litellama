@@ -1,3 +1,4 @@
+from litellama.models.base_model import BaseModel  # noqa: F401
 from litellama.models.bert.bert import BertConfig  # noqa: F401
 from litellama.models.bert.bert import BertEmbedding  # noqa: F401
 from litellama.models.bert.bert import BertEncoderLayer  # noqa: F401

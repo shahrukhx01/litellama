@@ -1,10 +1,10 @@
 from typing import Optional
 
-import lightning as L
 import torch
 import torch.nn as nn
 from loguru import logger
 
+from litellama.models.base_model import BaseModel
 from litellama.models.llama.llama_config import LLaMAConfig
 
 
@@ -317,7 +317,7 @@ class LLaMAModel(nn.Module):
         return self.norm(x)
 
 
-class LLaMACausalLM(L.LightningModule):
+class LLaMACausalLM(BaseModel):
     """LLaMA Language Model implementing an autoregressive decoder-only architecture.
 
     Args:
@@ -325,7 +325,7 @@ class LLaMACausalLM(L.LightningModule):
     """
 
     def __init__(self, config: LLaMAConfig):
-        super().__init__()
+        super().__init__(config.name_or_path, config.device)
         assert config.vocab_size != -1, "Vocab size must be set"
         self._config = config
 
@@ -370,3 +370,12 @@ class LLaMACausalLM(L.LightningModule):
             f"Successfully loaded weights from pretrained model: {self._config.name_or_path} in {load_duration:.2f}"
             " seconds."
         )
+
+
+if __name__ == "__main__":
+    from litellama.models.llama.llama_config import LLaMAVariantConfig
+
+    config = LLaMAVariantConfig.LLAMA_3_2_1B.value
+    model = LLaMACausalLM(config)
+    model.load_pretrained_hf()
+    model.generate(["Hello, my name is"], max_tokens=50)
