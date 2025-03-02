@@ -19,5 +19,4 @@ class TopK:
         # redistribute probability mass to keep the sum to 1
         probs_filtered.div_(probs_filtered.sum(dim=-1, keepdim=True))
         next_token = torch.multinomial(probs_filtered, num_samples=1)
-        next_token = torch.gather(probs.indices(), -1, next_token)
-        return next_token
+        return probs[..., next_token]
