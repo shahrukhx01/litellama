@@ -12,11 +12,11 @@ class TopK:
         Returns:
             torch.Tensor: The sampled token index.
         """
-        indices_to_remove = probs > torch.topk(probs, k)[0][..., -1, None]
+        indices_to_remove = probs < torch.topk(probs, k)[0][..., -1, None]
         probs_filtered = probs.clone()
         probs_filtered[indices_to_remove] = 0
 
-        # redistribute probability mass to keep the sum to 1
+        # Redistribute probability mass to keep the sum to 1
         probs_filtered.div_(probs_filtered.sum(dim=-1, keepdim=True))
         next_token = torch.multinomial(probs_filtered, num_samples=1)
-        return probs[..., next_token]
+        return next_token

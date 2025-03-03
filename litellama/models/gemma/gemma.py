@@ -325,7 +325,9 @@ class GemmaCausalLM(BaseModel):
     """
 
     def __init__(self, config: GemmaConfig):
-        super().__init__(config.name_or_path, config.device)
+        super().__init__(
+            config.name_or_path, config.device, config.max_position_embeddings
+        )
         assert config.vocab_size != -1, "Vocab size must be set"
         self._config = config
 

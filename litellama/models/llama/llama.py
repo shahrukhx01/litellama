@@ -325,7 +325,9 @@ class LLaMACausalLM(BaseModel):
     """
 
     def __init__(self, config: LLaMAConfig):
-        super().__init__(config.name_or_path, config.device)
+        super().__init__(
+            config.name_or_path, config.device, config.max_position_embeddings
+        )
         assert config.vocab_size != -1, "Vocab size must be set"
         self._config = config
 
@@ -378,4 +380,6 @@ if __name__ == "__main__":
     config = LLaMAVariantConfig.LLAMA_3_2_1B.value
     model = LLaMACausalLM(config)
     model.load_pretrained_hf()
-    model.generate(["Hello, my name is"], max_tokens=50)
+    model.generate(
+        ["New york is a city where"], max_tokens=10, top_k=10, temperature=0.7
+    )
